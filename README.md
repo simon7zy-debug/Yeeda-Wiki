@@ -1,36 +1,99 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# AIPM Workbench（本地版）
 
-## Getting Started
+一个面向 AI 产品经理求职场景的本地工作台 MVP。  
+目标是把“简历优化 / 项目封装 / 面试准备 / 任务拆解”串成可执行流程，而不是单点工具。
 
-First, run the development server:
+## 当前状态（2026-04-08）
+
+- P0 已完成：首页统一走 Diagnose 分流，Resume 模块接入流程，结果页有下一步建议。
+- P1 已完成：改写结果双视图（分析视图 / 简历成稿视图），Project/Interview/Workflow/Planner 模块骨架可跑通。
+- 约束保持：不做数据库、不做登录、不做云部署。
+
+## 快速开始
+
+前置要求：
+- Node.js 20+
+- npm 10+
 
 ```bash
+cd /Users/yeeda/Documents/Cursor/MyWiki/aipm-tool
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+打开 [http://localhost:3000](http://localhost:3000)。
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## 推荐验证命令
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm run lint
+npm run build
+```
 
-## Learn More
+## 核心流程
 
-To learn more about Next.js, take a look at the following resources:
+1. 首页选择任务入口（统一进入 Diagnose）
+2. Diagnose 回答 3 个问题（紧迫度 / 材料完整度 / 当前阻碍）
+3. 系统分流到对应模块（`/resume`、`/project`、`/interview`、`/workflow`、`/planner`）
+4. 模块输出结果，并给出下一步跳转建议
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## 页面路由
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- `/`：入口页（任务选择）
+- `/diagnose`：诊断与分流
+- `/resume`：简历上传与评审入口（支持 PDF/DOCX 上传）
+- `/review`：简历评审结果
+- `/rewrite`：改写结果（双视图）
+- `/project`：项目封装模块（骨架可用）
+- `/interview`：面试准备模块（骨架可用）
+- `/workflow`：AI 工作流指导模块（骨架可用）
+- `/planner`：任务拆解模块（骨架可用）
 
-## Deploy on Vercel
+## API 路由（本地）
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- `POST /api/upload`：上传并解析简历（PDF/DOCX）
+- `POST /api/review`：多角色评审 + 问题分级
+- `POST /api/rewrite`：输出改写建议与简历成稿
+- `POST /api/diagnose`：任务识别 + 状态判断 + 分流建议
+- `POST /api/project`：项目封装结果（结构化输出）
+- `POST /api/interview`：面试问题与回答框架
+- `POST /api/workflow`：AI 协作流程建议
+- `POST /api/planner`：任务拆解与执行计划
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## 文件上传说明
+
+- 当前支持：`.pdf`、`.docx`
+- 文件大小限制：`<= 8MB`
+- 仅本地单用户内存存储，不落数据库
+
+## 关键文档
+
+- `MASTER_PLAN.md`：主计划与当前优先级
+- `ARCHITECTURE_FOR_CODEX.md`：产品四层架构定义
+- `docs/PRODUCT_BRIEF.md`：产品目标与模块概览
+- `docs/MVP_SCOPE.md`：MVP 范围与验收标准
+- `docs/KNOWLEDGE_BASE.md`：评审规则与素材来源
+
+## 常见问题
+
+### 1) `fatal: not a git repository`
+
+请先进入项目目录再执行 git 命令：
+
+```bash
+cd /Users/yeeda/Documents/Cursor/MyWiki/aipm-tool
+```
+
+### 2) `Setting up fake worker failed ... pdf.worker.mjs`
+
+先清掉构建缓存后重启：
+
+```bash
+cd /Users/yeeda/Documents/Cursor/MyWiki/aipm-tool
+rm -rf .next
+npm run dev
+```
+
+### 3) GitHub 推送时要求密码
+
+HTTPS 推送请使用 GitHub PAT（Personal Access Token），不是 GitHub 登录密码。
