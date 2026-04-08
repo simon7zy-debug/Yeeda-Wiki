@@ -14,6 +14,12 @@ export type ReviewIssueType =
   | "表达质量"
   | "AIPM岗位匹配";
 
+export type ImpactType =
+  | "credibility"
+  | "interview_risk"
+  | "clarity"
+  | "style";
+
 export type DirectReplacement = {
   before: string;
   after: string;
@@ -36,6 +42,7 @@ export type ReviewIssue = {
   severity: Severity;
   title: string;
   issueType?: ReviewIssueType;
+  impactType: ImpactType;
   issueSummary: string;
   whyProblem: string;
   violatedRule: string;
@@ -50,6 +57,8 @@ export type ReviewIssue = {
 
 export type ReviewResult = {
   totalScore: number;
+  ruleScore: number;
+  interviewReadinessScore: number;
   summary: string;
   roleScores: RoleScore[];
   issues: ReviewIssue[];

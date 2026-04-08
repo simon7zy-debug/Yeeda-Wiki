@@ -1,5 +1,6 @@
 import type {
   DirectReplacement,
+  ImpactType,
   RewriteBlockGuidance,
   RewriteResult,
   RewriteSuggestion,
@@ -18,6 +19,7 @@ type RuleInput = {
   severity: Severity;
   title: string;
   issueType: ReviewIssueType;
+  impactType?: ImpactType;
   whyProblem: string;
   replacementAfter: string;
   violatedRule: string;
@@ -65,6 +67,27 @@ const USER_KNOWLEDGE_RULE_PRIORITY: Record<
   R6: { order: 13, weight: 0.88 },
   E1: { order: 14, weight: 0.86 },
   A4: { order: 15, weight: 0.82 },
+};
+
+const IMPACT_BASE_PENALTY: Record<ImpactType, number> = {
+  credibility: 14,
+  interview_risk: 12,
+  clarity: 7,
+  style: 4,
+};
+
+const IMPACT_RULE_FACTOR: Record<ImpactType, number> = {
+  credibility: 1.2,
+  interview_risk: 1.1,
+  clarity: 0.75,
+  style: 0.45,
+};
+
+const IMPACT_ROLE_FACTOR: Record<ImpactType, number> = {
+  credibility: 1.2,
+  interview_risk: 1.15,
+  clarity: 0.8,
+  style: 0.55,
 };
 
 function normalizeText(text: string): string {
@@ -174,12 +197,34 @@ function buildDirectReplacement(input: RuleInput): DirectReplacement {
   };
 }
 
+function inferImpactTypeFromRule(ruleId: string): ImpactType {
+  const map: Record<string, ImpactType> = {
+    R7: "credibility",
+    R3: "credibility",
+    R2: "credibility",
+    R1: "interview_risk",
+    U1: "interview_risk",
+    U2: "interview_risk",
+    A1: "interview_risk",
+    A2: "interview_risk",
+    A4: "interview_risk",
+    R4: "style",
+    R5: "clarity",
+    R6: "clarity",
+    E1: "clarity",
+    U3: "style",
+    U4: "style",
+  };
+  return map[ruleId] ?? "clarity";
+}
+
 function pushIssue(issues: ReviewIssue[], input: RuleInput): void {
   const issueSummary = input.title;
   const whyProblem = input.whyProblem;
   const violatedRule = input.violatedRule;
   const directReplacement = buildDirectReplacement(input);
   const whyThisMatters = input.whyThisMatters ?? fallbackWhyThisMatters(input.severity);
+  const impactType = input.impactType ?? inferImpactTypeFromRule(input.ruleId);
 
   issues.push({
     id: crypto.randomUUID(),
@@ -187,6 +232,7 @@ function pushIssue(issues: ReviewIssue[], input: RuleInput): void {
     severity: input.severity,
     title: issueSummary,
     issueType: input.issueType,
+    impactType,
     issueSummary,
     whyProblem,
     violatedRule,
@@ -231,22 +277,26 @@ const INTERVIEW_SEVERITY_FACTOR: Record<Severity, number> = {
   P2: 0.08,
 };
 
-const INTERVIEW_TYPE_BASE_PENALTY: Record<ReviewIssueType, number> = {
-  项目闭环: 12,
-  证据可信度: 13,
-  AIPM岗位匹配: 9,
-  表达质量: 4,
-};
-
-function computeInterviewReadiness(issues: ReviewIssue[]): number {
+function computeInterviewReadiness(
+  issues: ReviewIssue[],
+  antiFragileSignals: { decision: boolean; causalChain: boolean; evidence: boolean; boundary: boolean },
+): number {
   const penalty = issues.reduce((sum, issue) => {
-    const typePenalty = INTERVIEW_TYPE_BASE_PENALTY[issue.issueType ?? "表达质量"];
+    const typePenalty = IMPACT_BASE_PENALTY[issue.impactType];
     const severityFactor = INTERVIEW_SEVERITY_FACTOR[issue.severity];
     const ruleWeight = getUserKnowledgeWeight(issue.ruleId);
     return sum + typePenalty * severityFactor * ruleWeight;
   }, 0);
 
-  return Math.max(42, Math.min(97, Math.round(92 - penalty)));
+  const signalCount = [
+    antiFragileSignals.decision,
+    antiFragileSignals.causalChain,
+    antiFragileSignals.evidence,
+    antiFragileSignals.boundary,
+  ].filter(Boolean).length;
+  const resilienceBonus = signalCount >= 4 ? 8 : signalCount === 3 ? 5 : signalCount === 2 ? 2 : 0;
+
+  return Math.max(42, Math.min(97, Math.round(90 - penalty + resilienceBonus)));
 }
 
 function detectRepeatedPrefixes(lines: string[]): { prefix: string; sample: string; count: number }[] {
@@ -712,7 +762,36 @@ function roleSummary(role: RoleKey, score: number): string {
   return `${role} 视角下存在明显短板，建议优先修复 P0/P1 项。`;
 }
 
-function buildRoleScores(issues: ReviewIssue[]): RoleScore[] {
+function computeAntiFragileSignals(text: string): {
+  decision: boolean;
+  causalChain: boolean;
+  evidence: boolean;
+  boundary: boolean;
+} {
+  const hasDecision = hasAny(text, [/决策/, /判断/, /定义/, /选型/, /trade-?off/i, /对比/, /为什么/]);
+  const hasProblem = hasAny(text, [/问题/, /场景/, /目标/, /痛点/, /用户/]);
+  const hasMethod = hasAny(text, [/方案/, /策略/, /流程/, /机制/, /方法/, /落地/, /推进/]);
+  const hasResult = hasAny(text, [/提升/, /降低/, /增长/, /上线/, /结果/, /\d+(\.\d+)?\s*%/]);
+  const hasDataEvidence =
+    hasAny(text, [/\d+(\.\d+)?\s*%/, /来源/, /口径/, /统计/, /样本/, /评测/, /N=/i]) &&
+    hasResult;
+  const hasBoundary = hasAny(
+    text,
+    [/边界/, /约束/, /限制/, /风险/, /不允许/, /人工确认/, /回退/, /兜底/],
+  );
+
+  return {
+    decision: hasDecision,
+    causalChain: hasProblem && hasDecision && hasMethod && hasResult,
+    evidence: hasDataEvidence,
+    boundary: hasBoundary,
+  };
+}
+
+function buildRoleScores(
+  issues: ReviewIssue[],
+  antiFragileSignals: { decision: boolean; causalChain: boolean; evidence: boolean; boundary: boolean },
+): RoleScore[] {
   const bases: Record<RoleKey, number> = {
     HR: 86,
     PM: 85,
@@ -725,11 +804,21 @@ function buildRoleScores(issues: ReviewIssue[]): RoleScore[] {
 
   return roles.map((role) => {
     const penalty = issues.reduce((sum, issue) => {
-      const weightedUnit = SEVERITY_PENALTY[issue.severity] * getUserKnowledgeWeight(issue.ruleId);
-      return sum + (isRuleRelevantToRole(issue.ruleId, role) ? weightedUnit : weightedUnit * 0.4);
+      const weightedUnit =
+        SEVERITY_PENALTY[issue.severity] *
+        IMPACT_ROLE_FACTOR[issue.impactType] *
+        getUserKnowledgeWeight(issue.ruleId);
+      return sum + (isRuleRelevantToRole(issue.ruleId, role) ? weightedUnit : weightedUnit * 0.45);
     }, 0.0);
 
-    const score = Math.max(38, Math.min(96, Math.round(bases[role] - penalty)));
+    const signalCount = [
+      antiFragileSignals.decision,
+      antiFragileSignals.causalChain,
+      antiFragileSignals.evidence,
+      antiFragileSignals.boundary,
+    ].filter(Boolean).length;
+    const bonus = signalCount >= 4 ? 5 : signalCount === 3 ? 3 : signalCount === 2 ? 1 : 0;
+    const score = Math.max(38, Math.min(96, Math.round(bases[role] - penalty + bonus)));
     return {
       role,
       score,
@@ -757,18 +846,43 @@ function buildSummary(
   return `共发现 ${issues.length} 个问题（P0 ${p0Count}、P1 ${p1Count}、P2 ${p2Count}）。Rule Score ${ruleScore}，Interview Readiness ${interviewReadiness}。建议按 USER_KNOWLEDGE 优先级先处理 P0，再处理规则 ${topRules}。`;
 }
 
+function computeRuleScore(
+  issues: ReviewIssue[],
+  antiFragileSignals: { decision: boolean; causalChain: boolean; evidence: boolean; boundary: boolean },
+): number {
+  const rulePenalty = issues.reduce((sum, issue) => {
+    return (
+      sum +
+      SEVERITY_PENALTY[issue.severity] *
+        IMPACT_RULE_FACTOR[issue.impactType] *
+        getUserKnowledgeWeight(issue.ruleId)
+    );
+  }, 0);
+
+  const signalCount = [
+    antiFragileSignals.decision,
+    antiFragileSignals.causalChain,
+    antiFragileSignals.evidence,
+    antiFragileSignals.boundary,
+  ].filter(Boolean).length;
+  const bonus = signalCount >= 4 ? 6 : signalCount === 3 ? 4 : signalCount === 2 ? 2 : 0;
+
+  return Math.max(40, Math.min(96, Math.round(92 - rulePenalty + bonus)));
+}
+
 export function buildRuleBasedReview(text: string): ReviewResult {
   const normalized = normalizeText(text);
   const issues = sortIssuesByUserKnowledge(buildRuleIssues(normalized));
-  const roleScores = buildRoleScores(issues);
-  const ruleScore = Math.round(
-    roleScores.reduce((sum, item) => sum + item.score, 0) / roleScores.length,
-  );
-  const interviewReadiness = computeInterviewReadiness(issues);
+  const antiFragileSignals = computeAntiFragileSignals(normalized);
+  const roleScores = buildRoleScores(issues, antiFragileSignals);
+  const ruleScore = computeRuleScore(issues, antiFragileSignals);
+  const interviewReadiness = computeInterviewReadiness(issues, antiFragileSignals);
   const totalScore = Math.round(ruleScore * 0.45 + interviewReadiness * 0.55);
 
   return {
     totalScore,
+    ruleScore,
+    interviewReadinessScore: interviewReadiness,
     summary: buildSummary(issues, ruleScore, interviewReadiness),
     roleScores,
     issues,
@@ -791,7 +905,12 @@ function buildQuickFixes(issues: ReviewIssue[]): RewriteSuggestion[] {
   }
 
   const prioritized = sortIssuesByUserKnowledge(issues);
-  const interviewImpactFirst = prioritized.filter((issue) => issue.severity !== "P2");
+  const interviewImpactFirst = prioritized.filter(
+    (issue) =>
+      issue.impactType === "credibility" ||
+      issue.impactType === "interview_risk" ||
+      issue.severity !== "P2",
+  );
   const selectedIssues =
     interviewImpactFirst.length >= 6
       ? interviewImpactFirst.slice(0, 6)

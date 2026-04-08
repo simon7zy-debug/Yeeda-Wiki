@@ -11,8 +11,8 @@ type ResumeReferenceRailProps = {
 
 const TAB_ITEMS: Array<{ key: TabKey; label: string }> = [
   { key: "structure", label: "结构模板" },
-  { key: "summary", label: "个人简介示例" },
-  { key: "project", label: "主项目示例" },
+  { key: "summary", label: "AIPM 示例" },
+  { key: "project", label: "项目块示例" },
   { key: "bullet_compare", label: "强弱 Bullet 对比" },
 ];
 
@@ -125,12 +125,16 @@ export default function ResumeReferenceRail({
 
         {activeTab === "summary" ? (
           <div className="space-y-2">
-            <p className="text-xs font-semibold text-foreground">个人简介参考写法</p>
+            <p className="text-xs font-semibold text-foreground">AIPM 个人简介示例</p>
             {SUMMARY_EXAMPLES.map((item) => (
               <p key={item} className="rounded-md border border-line bg-white px-2 py-1.5 text-xs leading-6 text-ink-soft">
                 {item}
               </p>
             ))}
+            <p className="pt-1 text-xs font-semibold text-foreground">AIPM 项目表达示例</p>
+            <pre className="overflow-x-auto rounded-md border border-line bg-white px-2 py-1.5 text-xs leading-6 whitespace-pre-wrap text-ink-soft">
+              {PROJECT_EXAMPLES[0]}
+            </pre>
           </div>
         ) : null}
 

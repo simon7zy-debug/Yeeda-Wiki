@@ -46,6 +46,7 @@ const PRIORITY_META: Record<
 };
 
 type IssueTypeKey = NonNullable<ReviewIssue["issueType"]> | "未分类";
+type ImpactTypeKey = ReviewIssue["impactType"];
 
 const ISSUE_TYPE_ORDER: IssueTypeKey[] = [
   "项目闭环",
@@ -84,6 +85,38 @@ const ISSUE_TYPE_META: Record<
   },
 };
 
+const IMPACT_META: Record<
+  ImpactTypeKey,
+  {
+    label: string;
+    chipClass: string;
+  }
+> = {
+  credibility: {
+    label: "可信度风险",
+    chipClass: "border-red-200 bg-red-50 text-red-700",
+  },
+  interview_risk: {
+    label: "面试风险",
+    chipClass: "border-orange-200 bg-orange-50 text-orange-700",
+  },
+  clarity: {
+    label: "清晰度风险",
+    chipClass: "border-sky-200 bg-sky-50 text-sky-700",
+  },
+  style: {
+    label: "风格风险",
+    chipClass: "border-zinc-200 bg-zinc-50 text-zinc-700",
+  },
+};
+
+const IMPACT_RANK: Record<ImpactTypeKey, number> = {
+  credibility: 0,
+  interview_risk: 1,
+  clarity: 2,
+  style: 3,
+};
+
 const SEVERITY_RANK: Record<Severity, number> = {
   P0: 0,
   P1: 1,
@@ -119,6 +152,10 @@ function sortIssuesByPriority(issues: ReviewIssue[]): ReviewIssue[] {
   return [...issues].sort((a, b) => {
     const bySeverity = SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity];
     if (bySeverity !== 0) return bySeverity;
+
+    const byImpact =
+      IMPACT_RANK[a.impactType ?? "clarity"] - IMPACT_RANK[b.impactType ?? "clarity"];
+    if (byImpact !== 0) return byImpact;
 
     const aLine = a.sourceAnchor?.line ?? Number.MAX_SAFE_INTEGER;
     const bLine = b.sourceAnchor?.line ?? Number.MAX_SAFE_INTEGER;
@@ -222,13 +259,22 @@ export default function ReviewClient() {
 
           {data ? (
             <>
-              <section className="grid gap-4 md:grid-cols-[220px_1fr]">
+              <section className="grid gap-4 lg:grid-cols-[220px_220px_minmax(0,1fr)]">
                 <div className="rounded-2xl border border-line bg-[#fff7ef] p-5">
                   <p className="text-xs tracking-wide text-ink-soft">总分</p>
                   <p className="mt-2 text-5xl font-semibold text-accent">
                     {data.review.totalScore}
                   </p>
                   <p className="mt-1 text-sm text-ink-soft">/ 100</p>
+                </div>
+                <div className="rounded-2xl border border-line bg-[#f2faf4] p-5">
+                  <p className="text-xs tracking-wide text-ink-soft">Interview Readiness</p>
+                  <p className="mt-2 text-4xl font-semibold text-emerald-700">
+                    {data.review.interviewReadinessScore}
+                  </p>
+                  <p className="mt-1 text-xs text-ink-soft">
+                    Rule Score：{data.review.ruleScore}
+                  </p>
                 </div>
                 <div className="rounded-2xl border border-line bg-white p-5">
                   <p className="text-sm text-ink-soft">{data.review.summary}</p>
@@ -328,6 +374,11 @@ export default function ReviewClient() {
                               >
                                 {ISSUE_TYPE_META[issue.issueType ?? "未分类"].label}
                               </span>
+                              <span
+                                className={`inline-flex rounded-md border px-2 py-0.5 text-xs font-medium ${IMPACT_META[issue.impactType ?? "clarity"].chipClass}`}
+                              >
+                                {IMPACT_META[issue.impactType ?? "clarity"].label}
+                              </span>
                             </div>
                             <p className="mt-2 text-sm font-semibold text-foreground">
                               {issue.issueSummary}
@@ -389,6 +440,11 @@ export default function ReviewClient() {
                                     }`}
                                   >
                                     {ISSUE_TYPE_META[issue.issueType ?? "未分类"].label}
+                                  </span>
+                                  <span
+                                    className={`inline-flex rounded-md border px-2 py-0.5 text-xs font-medium ${IMPACT_META[issue.impactType ?? "clarity"].chipClass}`}
+                                  >
+                                    {IMPACT_META[issue.impactType ?? "clarity"].label}
                                   </span>
                                 </div>
                                 <h3 className="mt-3 text-base font-semibold text-foreground">
