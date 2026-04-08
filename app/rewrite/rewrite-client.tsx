@@ -124,6 +124,40 @@ export default function RewriteClient() {
             {viewMode === "analysis" ? (
               <>
                 <section className="rounded-2xl border border-line bg-white p-5">
+                  <h2 className="text-lg font-semibold text-foreground">
+                    块级改写模板（整段可替换）
+                  </h2>
+                  <p className="mt-2 text-sm text-ink-soft">
+                    先替换完整段落，再回到上方做局部精修，效率更高。
+                  </p>
+                  <div className="mt-4 space-y-4">
+                    <article className="rounded-xl border border-line bg-[#fffdfa] p-4">
+                      <p className="text-xs font-semibold text-ink-soft">个人简介整段示例</p>
+                      <pre className="mt-2 overflow-x-auto text-sm leading-7 whitespace-pre-wrap text-foreground">
+                        {data.rewrite.blockGuidance?.personalSummarySample ??
+                          "建议按“定位 + 方法 + 结果”写成 2-3 行完整简介。"}
+                      </pre>
+                    </article>
+
+                    <article className="rounded-xl border border-line bg-[#fffdfa] p-4">
+                      <p className="text-xs font-semibold text-ink-soft">工作经历整段示例</p>
+                      <pre className="mt-2 overflow-x-auto text-sm leading-7 whitespace-pre-wrap text-foreground">
+                        {data.rewrite.blockGuidance?.workExperienceSample ??
+                          "建议把职责范围、关键动作、复盘机制写成完整三条要点。"}
+                      </pre>
+                    </article>
+
+                    <article className="rounded-xl border border-line bg-[#fffdfa] p-4">
+                      <p className="text-xs font-semibold text-ink-soft">项目经历整段示例</p>
+                      <pre className="mt-2 overflow-x-auto text-sm leading-7 whitespace-pre-wrap text-foreground">
+                        {data.rewrite.blockGuidance?.projectBulletSample ??
+                          "建议按“项目背景-关键动作-决策依据-项目结果”写成完整项目块。"}
+                      </pre>
+                    </article>
+                  </div>
+                </section>
+
+                <section className="rounded-2xl border border-line bg-white p-5">
                   <h2 className="text-lg font-semibold text-foreground">可直接替换建议</h2>
                   <div className="mt-4 space-y-3">
                     {data.rewrite.quickFixes.map((item) => (
@@ -211,7 +245,7 @@ export default function RewriteClient() {
         ) : null}
         </section>
         <div className="hidden lg:block">
-          <ResumeReferenceRail title="改写参考栏" />
+          <ResumeReferenceRail title="改写参考栏" defaultTab="project" />
         </div>
       </main>
     </div>

@@ -45,12 +45,87 @@ const PRIORITY_META: Record<
   },
 };
 
+type IssueTypeKey = NonNullable<ReviewIssue["issueType"]> | "未分类";
+
+const ISSUE_TYPE_ORDER: IssueTypeKey[] = [
+  "项目闭环",
+  "证据可信度",
+  "表达质量",
+  "AIPM岗位匹配",
+  "未分类",
+];
+
+const ISSUE_TYPE_META: Record<
+  IssueTypeKey,
+  {
+    label: string;
+    chipClass: string;
+  }
+> = {
+  项目闭环: {
+    label: "项目闭环",
+    chipClass: "border-rose-200 bg-rose-50 text-rose-700",
+  },
+  证据可信度: {
+    label: "证据可信度",
+    chipClass: "border-indigo-200 bg-indigo-50 text-indigo-700",
+  },
+  表达质量: {
+    label: "表达质量",
+    chipClass: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  },
+  AIPM岗位匹配: {
+    label: "AIPM岗位匹配",
+    chipClass: "border-amber-200 bg-amber-50 text-amber-700",
+  },
+  未分类: {
+    label: "未分类",
+    chipClass: "border-line bg-white text-ink-soft",
+  },
+};
+
+const SEVERITY_RANK: Record<Severity, number> = {
+  P0: 0,
+  P1: 1,
+  P2: 2,
+};
+
 function groupIssuesByPriority(issues: ReviewIssue[]): Record<Severity, ReviewIssue[]> {
   return {
     P0: issues.filter((issue) => issue.severity === "P0"),
     P1: issues.filter((issue) => issue.severity === "P1"),
     P2: issues.filter((issue) => issue.severity === "P2"),
   };
+}
+
+function countIssuesByType(issues: ReviewIssue[]): Record<IssueTypeKey, number> {
+  return issues.reduce<Record<IssueTypeKey, number>>(
+    (acc, issue) => {
+      const key = issue.issueType ?? "未分类";
+      acc[key] += 1;
+      return acc;
+    },
+    {
+      项目闭环: 0,
+      证据可信度: 0,
+      表达质量: 0,
+      AIPM岗位匹配: 0,
+      未分类: 0,
+    },
+  );
+}
+
+function sortIssuesByPriority(issues: ReviewIssue[]): ReviewIssue[] {
+  return [...issues].sort((a, b) => {
+    const bySeverity = SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity];
+    if (bySeverity !== 0) return bySeverity;
+
+    const aLine = a.sourceAnchor?.line ?? Number.MAX_SAFE_INTEGER;
+    const bLine = b.sourceAnchor?.line ?? Number.MAX_SAFE_INTEGER;
+    if (aLine !== bLine) return aLine - bLine;
+
+    return a.ruleId.localeCompare(b.ruleId);
+  });
 }
 
 export default function ReviewClient() {
@@ -90,6 +165,14 @@ export default function ReviewClient() {
 
   const groupedIssues = useMemo(
     () => (data ? groupIssuesByPriority(data.review.issues) : null),
+    [data],
+  );
+  const issueTypeCounts = useMemo(
+    () => (data ? countIssuesByType(data.review.issues) : null),
+    [data],
+  );
+  const topFixes = useMemo(
+    () => (data ? sortIssuesByPriority(data.review.issues).slice(0, 3) : []),
     [data],
   );
 
@@ -168,6 +251,48 @@ export default function ReviewClient() {
                 </div>
               </section>
 
+              <section className="mt-6 grid gap-4 lg:grid-cols-2">
+                <article className="rounded-2xl border border-line bg-white p-5">
+                  <h2 className="text-sm font-semibold text-foreground">问题数量（按严重级别）</h2>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                    {PRIORITY_ORDER.map((severity) => {
+                      const meta = PRIORITY_META[severity];
+                      const count = groupedIssues?.[severity].length ?? 0;
+                      return (
+                        <div
+                          key={`severity-${severity}`}
+                          className={`rounded-lg border px-3 py-2 ${meta.sectionClass}`}
+                        >
+                          <p className="text-xs text-ink-soft">{meta.label}</p>
+                          <p className="mt-1 text-2xl font-semibold text-foreground">{count}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </article>
+
+                <article className="rounded-2xl border border-line bg-white p-5">
+                  <h2 className="text-sm font-semibold text-foreground">问题数量（按问题类型）</h2>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {ISSUE_TYPE_ORDER.map((typeKey) => {
+                      const count = issueTypeCounts?.[typeKey] ?? 0;
+                      const meta = ISSUE_TYPE_META[typeKey];
+                      if (count === 0 && typeKey === "未分类") return null;
+
+                      return (
+                        <span
+                          key={`issue-type-${typeKey}`}
+                          className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium ${meta.chipClass}`}
+                        >
+                          <span>{meta.label}</span>
+                          <span>{count}</span>
+                        </span>
+                      );
+                    })}
+                  </div>
+                </article>
+              </section>
+
               <section className="mt-8">
                 <h2 className="text-xl font-semibold text-foreground">问题分组（P0 / P1 / P2）</h2>
                 {!hasIssues ? (
@@ -175,7 +300,55 @@ export default function ReviewClient() {
                     当前未检测到明显问题，建议继续优化表达细节。
                   </p>
                 ) : (
-                  <div className="mt-4 space-y-4">
+                  <div className="mt-4 space-y-5">
+                    <section className="rounded-2xl border border-red-200 bg-red-50/50 p-4">
+                      <div className="mb-3 flex items-center justify-between gap-3">
+                        <h3 className="text-base font-semibold text-foreground">Top 3 优先修复</h3>
+                        <p className="text-xs text-ink-soft">按 P0 / P1 / P2 自动排序</p>
+                      </div>
+                      <div className="space-y-3">
+                        {topFixes.map((issue, index) => (
+                          <article
+                            key={`top-fix-${issue.id}`}
+                            className="rounded-xl border border-line bg-white p-3"
+                          >
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="inline-flex rounded-md border border-red-200 bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-700">
+                                TOP {index + 1}
+                              </span>
+                              <span
+                                className={`inline-flex rounded-md border px-2 py-0.5 text-xs font-semibold ${PRIORITY_META[issue.severity].badgeClass}`}
+                              >
+                                {issue.severity}
+                              </span>
+                              <span
+                                className={`inline-flex rounded-md border px-2 py-0.5 text-xs font-medium ${
+                                  ISSUE_TYPE_META[issue.issueType ?? "未分类"].chipClass
+                                }`}
+                              >
+                                {ISSUE_TYPE_META[issue.issueType ?? "未分类"].label}
+                              </span>
+                            </div>
+                            <p className="mt-2 text-sm font-semibold text-foreground">
+                              {issue.issueSummary}
+                            </p>
+                            <p className="mt-1 text-xs leading-6 text-ink-soft">
+                              直接替换：{issue.directReplacement.after}
+                            </p>
+                            {issue.sourceAnchor ? (
+                              <button
+                                type="button"
+                                className="mt-2 inline-flex items-center justify-center rounded-lg border border-line bg-white px-3 py-1 text-xs font-medium text-foreground hover:border-accent hover:text-accent"
+                                onClick={() => setActiveLine(issue.sourceAnchor?.line ?? null)}
+                              >
+                                定位原文：第 {issue.sourceAnchor.line} 行
+                              </button>
+                            ) : null}
+                          </article>
+                        ))}
+                      </div>
+                    </section>
+
                     {PRIORITY_ORDER.map((severity) => {
                       const issues = groupedIssues?.[severity] ?? [];
                       const meta = PRIORITY_META[severity];
@@ -204,36 +377,59 @@ export default function ReviewClient() {
                                 key={issue.id}
                                 className="rounded-xl border border-line bg-white p-4"
                               >
-                                <h3 className="text-base font-semibold text-foreground">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span
+                                    className={`inline-flex rounded-md border px-2 py-0.5 text-xs font-semibold ${meta.badgeClass}`}
+                                  >
+                                    {meta.label}
+                                  </span>
+                                  <span
+                                    className={`inline-flex rounded-md border px-2 py-0.5 text-xs font-medium ${
+                                      ISSUE_TYPE_META[issue.issueType ?? "未分类"].chipClass
+                                    }`}
+                                  >
+                                    {ISSUE_TYPE_META[issue.issueType ?? "未分类"].label}
+                                  </span>
+                                </div>
+                                <h3 className="mt-3 text-base font-semibold text-foreground">
                                   {issue.issueSummary}
                                 </h3>
-                                <p className="mt-2 text-sm leading-7 text-ink-soft">
-                                  为什么是问题：{issue.whyProblem}
-                                </p>
-                                <p className="mt-1 text-sm leading-7 text-ink-soft">
-                                  违反规则：{issue.violatedRule}（{issue.ruleId}）
-                                </p>
 
-                                <div className="mt-3 rounded-lg border border-line bg-[#fffdfa] p-3">
-                                  <p className="text-xs font-semibold text-ink-soft">直接替换建议</p>
-                                  <p className="mt-1 text-sm text-ink-soft">
-                                    原句：{issue.directReplacement.before}
-                                  </p>
-                                  <p className="mt-1 text-sm font-medium text-foreground">
-                                    替换：{issue.directReplacement.after}
+                                <div className="mt-3 rounded-lg border border-line bg-[#fcfbf8] p-3">
+                                  <p className="text-xs font-semibold text-ink-soft">原文片段</p>
+                                  <p className="mt-1 text-sm leading-7 text-foreground">
+                                    {issue.directReplacement.before}
                                   </p>
                                 </div>
 
-                                <div className="mt-3 rounded-lg border border-line bg-white p-3">
-                                  <p className="text-xs font-semibold text-ink-soft">Why This Matters</p>
-                                  <p className="mt-1 text-sm text-ink-soft">
-                                    HR 筛选风险：{issue.whyThisMatters.hrScreeningRisk}
+                                <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50/60 p-3">
+                                  <p className="text-xs font-semibold text-amber-800">问题诊断</p>
+                                  <p className="mt-1 text-sm leading-7 text-foreground">
+                                    为什么是问题：{issue.whyProblem}
                                   </p>
-                                  <p className="mt-1 text-sm text-ink-soft">
-                                    面试追问风险：{issue.whyThisMatters.interviewFollowUpRisk}
+                                  <p className="mt-1 text-sm leading-7 text-foreground">
+                                    违反规则：{issue.violatedRule}（{issue.ruleId}）
                                   </p>
-                                  <p className="mt-1 text-sm text-ink-soft">
-                                    可信度风险：{issue.whyThisMatters.credibilityRisk}
+                                  <div className="mt-2 rounded-md border border-amber-200 bg-white p-2">
+                                    <p className="text-[11px] font-semibold text-amber-800">
+                                      Why This Matters
+                                    </p>
+                                    <p className="mt-1 text-xs leading-6 text-ink-soft">
+                                      HR 筛选风险：{issue.whyThisMatters.hrScreeningRisk}
+                                    </p>
+                                    <p className="mt-1 text-xs leading-6 text-ink-soft">
+                                      面试追问风险：{issue.whyThisMatters.interviewFollowUpRisk}
+                                    </p>
+                                    <p className="mt-1 text-xs leading-6 text-ink-soft">
+                                      可信度风险：{issue.whyThisMatters.credibilityRisk}
+                                    </p>
+                                  </div>
+                                </div>
+
+                                <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50/60 p-3">
+                                  <p className="text-xs font-semibold text-emerald-800">直接替换建议</p>
+                                  <p className="mt-1 text-sm font-medium leading-7 text-foreground">
+                                    {issue.directReplacement.after}
                                   </p>
                                 </div>
 
@@ -283,7 +479,7 @@ export default function ReviewClient() {
         </section>
 
         <aside className="space-y-4">
-          <ResumeReferenceRail title="评审参考栏" />
+          <ResumeReferenceRail title="评审参考栏" defaultTab="bullet_compare" />
           {data ? (
             <section className="rounded-2xl border border-line bg-white p-5 lg:sticky lg:top-[27rem]">
               <h2 className="text-sm font-semibold text-foreground">原文定位（高亮映射）</h2>

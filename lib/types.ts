@@ -8,6 +8,12 @@ export type RoleScore = {
   summary: string;
 };
 
+export type ReviewIssueType =
+  | "项目闭环"
+  | "证据可信度"
+  | "表达质量"
+  | "AIPM岗位匹配";
+
 export type DirectReplacement = {
   before: string;
   after: string;
@@ -29,6 +35,7 @@ export type ReviewIssue = {
   ruleId: string;
   severity: Severity;
   title: string;
+  issueType?: ReviewIssueType;
   issueSummary: string;
   whyProblem: string;
   violatedRule: string;
@@ -54,10 +61,17 @@ export type RewriteSuggestion = {
   after: string;
 };
 
+export type RewriteBlockGuidance = {
+  personalSummarySample: string;
+  workExperienceSample: string;
+  projectBulletSample: string;
+};
+
 export type RewriteResult = {
   quickFixes: RewriteSuggestion[];
   optimizedProjectSample: string;
   fullDraft: string;
+  blockGuidance?: RewriteBlockGuidance;
   resumeDeliveryDraft?: string;
   deliveryChecklist?: string[];
 };

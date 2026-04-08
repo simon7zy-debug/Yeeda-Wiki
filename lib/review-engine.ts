@@ -1,8 +1,10 @@
 import type {
   DirectReplacement,
+  RewriteBlockGuidance,
   RewriteResult,
   RewriteSuggestion,
   ReviewIssue,
+  ReviewIssueType,
   ReviewResult,
   RoleKey,
   RoleScore,
@@ -15,6 +17,7 @@ type RuleInput = {
   ruleId: string;
   severity: Severity;
   title: string;
+  issueType: ReviewIssueType;
   whyProblem: string;
   replacementAfter: string;
   violatedRule: string;
@@ -149,6 +152,7 @@ function pushIssue(issues: ReviewIssue[], input: RuleInput): void {
     ruleId: input.ruleId,
     severity: input.severity,
     title: issueSummary,
+    issueType: input.issueType,
     issueSummary,
     whyProblem,
     violatedRule,
@@ -245,6 +249,7 @@ function buildRuleIssues(text: string): ReviewIssue[] {
       ruleId: "R1",
       severity: "P0",
       title: "项目表达不完整",
+      issueType: "项目闭环",
       whyProblem: "项目描述缺少完整闭环，读者无法判断你解决了什么问题并产生了什么结果。",
       violatedRule: "项目必须完整表达：背景 -> 做了什么 -> 结果",
       replacementBefore: evidence,
@@ -264,6 +269,7 @@ function buildRuleIssues(text: string): ReviewIssue[] {
       ruleId: "R2",
       severity: "P1",
       title: "工具描述替代能力表达",
+      issueType: "证据可信度",
       whyProblem: "“会用工具”属于工具名堆叠，不能证明你具备可复用的方法论与结果能力。",
       violatedRule: "工具 ≠ 能力",
       replacementBefore: toolLine,
@@ -284,6 +290,7 @@ function buildRuleIssues(text: string): ReviewIssue[] {
         ruleId: "R3",
         severity: "P1",
         title: "优势缺少经历支撑",
+        issueType: "证据可信度",
         whyProblem: "仅写“优势/擅长”会被视为主观评价，缺少可核验的项目证据。",
         violatedRule: "优势必须有经历支撑",
         replacementBefore: strengthLine,
@@ -307,6 +314,7 @@ function buildRuleIssues(text: string): ReviewIssue[] {
       ruleId: "R4",
       severity: "P1",
       title: "检测到 STAR 模板化标记",
+      issueType: "表达质量",
       whyProblem: "模板化标签会降低自然表达，容易给人“套模板”而非真实经验的观感。",
       violatedRule: "不允许写【S】【T】【A】【R】",
       replacementBefore: starLine,
@@ -324,6 +332,7 @@ function buildRuleIssues(text: string): ReviewIssue[] {
       ruleId: "R5",
       severity: "P2",
       title: "多项目句式重复度偏高",
+      issueType: "表达质量",
       whyProblem: "连续使用同一开头会降低信息辨识度，削弱各项目的独特价值。",
       violatedRule: "不同项目不能同一套句式",
       replacementBefore: repeatedSample,
@@ -343,6 +352,7 @@ function buildRuleIssues(text: string): ReviewIssue[] {
       ruleId: "R6",
       severity: "P2",
       title: "经历内容存在重复",
+      issueType: "表达质量",
       whyProblem: "重复陈述会占用篇幅，且让读者难以区分岗位职责与项目贡献。",
       violatedRule: "工作经历与项目经历不能重复",
       replacementBefore: duplicateSample,
@@ -375,6 +385,7 @@ function buildRuleIssues(text: string): ReviewIssue[] {
       ruleId: "R7",
       severity: "P1",
       title: "数据结果缺少解释口径",
+      issueType: "证据可信度",
       whyProblem: "只有结果数字、缺少来源与口径，会被质疑数据真实性与可比性。",
       violatedRule: "数据必须可解释：怎么算的、来源是什么",
       replacementBefore: metricLine,
@@ -391,6 +402,7 @@ function buildRuleIssues(text: string): ReviewIssue[] {
       ruleId: "E1",
       severity: "P2",
       title: "英文术语括号解释较重",
+      issueType: "表达质量",
       whyProblem: "术语+括号解释会打断阅读节奏，影响招聘方快速理解关键信息。",
       violatedRule: "表达规则：英文 + 括号解释 -> 自然语言表达",
       replacementBefore: englishExplainLine,
@@ -417,6 +429,7 @@ function buildRuleIssues(text: string): ReviewIssue[] {
       ruleId: "A1",
       severity: missingCapabilities.length >= 3 ? "P1" : "P2",
       title: "AI PM 核心能力覆盖不足",
+      issueType: "AIPM岗位匹配",
       whyProblem: "能力覆盖不均衡会让岗位匹配度显得偏弱，尤其在 AI PM 核心能力维度。",
       violatedRule: "AI PM 核心能力：模型选型 / 场景判断 / 需求拆解 / 技术边界 / 数据评估",
       replacementBefore: `当前缺失：${missingCapabilities.join("、")}`,
@@ -443,6 +456,7 @@ function buildRuleIssues(text: string): ReviewIssue[] {
       ruleId: "A2",
       severity: missingFocus.length >= 4 ? "P1" : "P2",
       title: "项目评审重点覆盖不足",
+      issueType: "AIPM岗位匹配",
       whyProblem: "关键评审点缺失会导致项目叙述不完整，难以支撑面试追问。",
       violatedRule: "项目评审重点：用户/问题/AI 选择/模型选择/方案对比/量化结果",
       replacementBefore: `当前缺失重点：${missingFocus.join("、")}`,
@@ -735,11 +749,58 @@ function buildResumeDeliveryDraft(sourceText: string, review: ReviewResult): str
   ].join("\n");
 }
 
+function buildBlockGuidance(sourceText: string): RewriteBlockGuidance {
+  const lines = splitLines(sourceText);
+  const headline = getBestLine(
+    lines,
+    [/产品经理/, /AI/, /负责/, /主导/, /落地/],
+    "聚焦 AI 产品经理方向，具备从需求拆解到方案落地的完整实践经验。",
+  );
+  const userProblem = getBestLine(
+    lines,
+    [/用户/, /问题/, /痛点/, /场景/, /业务/],
+    "面向一线业务场景识别关键问题，并明确目标用户与可衡量目标。",
+  );
+  const action = getBestLine(
+    lines,
+    [/负责/, /主导/, /设计/, /推进/, /落地/, /优化/],
+    "主导需求拆解、方案设计与跨团队推进，确保关键路径按期交付。",
+  );
+  const result = findResultLine(lines)
+    ? shortLine(findResultLine(lines) ?? "", 100)
+    : "最终在效率与质量指标上实现可量化提升。";
+  const modelDecision = getBestLine(
+    lines,
+    [/模型/, /选型/, /RAG/i, /Agent/i, /GPT/i, /Qwen/i, /技术/],
+    "根据场景约束完成方案与模型选型，平衡效果、成本与交付风险。",
+  );
+
+  return {
+    personalSummarySample: [
+      "AI 产品经理，聚焦智能应用从 0 到 1 落地。",
+      headline,
+      "擅长把模糊需求拆解为可执行任务，推动研发、设计、业务协同交付，并通过数据复盘持续优化。",
+    ].join("\n"),
+    workExperienceSample: [
+      "- 负责 AI 相关产品线需求管理，完成用户问题梳理、优先级判断与版本节奏规划。",
+      `- ${action}`,
+      "- 建立需求评审与上线复盘机制，持续追踪核心指标变化并推进二次优化。",
+    ].join("\n"),
+    projectBulletSample: [
+      `- 项目背景：${userProblem}`,
+      `- 关键动作：${action}`,
+      `- 决策依据：${modelDecision}`,
+      `- 项目结果：${result}`,
+    ].join("\n"),
+  };
+}
+
 export function buildRuleBasedRewrite(text: string, review: ReviewResult): RewriteResult {
   return {
     quickFixes: buildQuickFixes(review.issues),
     optimizedProjectSample: buildOptimizedProjectSample(text),
     fullDraft: buildFullDraft(text, review),
+    blockGuidance: buildBlockGuidance(text),
     resumeDeliveryDraft: buildResumeDeliveryDraft(text, review),
     deliveryChecklist: buildDeliveryChecklist(review),
   };
