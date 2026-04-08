@@ -28,9 +28,43 @@ type RuleInput = {
 };
 
 const SEVERITY_PENALTY: Record<Severity, number> = {
-  P0: 14,
-  P1: 9,
-  P2: 5,
+  // USER_KNOWLEDGE scoring rule:
+  // P0 strong penalty, P1 light penalty, P2 near-zero penalty.
+  P0: 18,
+  P1: 6,
+  P2: 1.2,
+};
+
+const SEVERITY_RANK: Record<Severity, number> = {
+  P0: 0,
+  P1: 1,
+  P2: 2,
+};
+
+// USER_KNOWLEDGE priority baseline:
+// decision/causality/authenticity > boundary/risk > expression polish.
+const USER_KNOWLEDGE_RULE_PRIORITY: Record<
+  string,
+  {
+    order: number;
+    weight: number;
+  }
+> = {
+  U1: { order: 1, weight: 1.5 },
+  R1: { order: 2, weight: 1.45 },
+  R7: { order: 3, weight: 1.4 },
+  R3: { order: 4, weight: 1.35 },
+  U2: { order: 5, weight: 1.25 },
+  A2: { order: 6, weight: 1.2 },
+  A1: { order: 7, weight: 1.12 },
+  R2: { order: 8, weight: 1.08 },
+  R4: { order: 9, weight: 1.0 },
+  U3: { order: 10, weight: 0.95 },
+  U4: { order: 11, weight: 0.92 },
+  R5: { order: 12, weight: 0.9 },
+  R6: { order: 13, weight: 0.88 },
+  E1: { order: 14, weight: 0.86 },
+  A4: { order: 15, weight: 0.82 },
 };
 
 function normalizeText(text: string): string {
@@ -166,6 +200,55 @@ function pushIssue(issues: ReviewIssue[], input: RuleInput): void {
   });
 }
 
+function getUserKnowledgePriorityOrder(ruleId: string): number {
+  return USER_KNOWLEDGE_RULE_PRIORITY[ruleId]?.order ?? 999;
+}
+
+function getUserKnowledgeWeight(ruleId: string): number {
+  return USER_KNOWLEDGE_RULE_PRIORITY[ruleId]?.weight ?? 1;
+}
+
+function sortIssuesByUserKnowledge(issues: ReviewIssue[]): ReviewIssue[] {
+  return [...issues].sort((a, b) => {
+    const bySeverity = SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity];
+    if (bySeverity !== 0) return bySeverity;
+
+    const byPriority =
+      getUserKnowledgePriorityOrder(a.ruleId) - getUserKnowledgePriorityOrder(b.ruleId);
+    if (byPriority !== 0) return byPriority;
+
+    const aLine = a.sourceAnchor?.line ?? Number.MAX_SAFE_INTEGER;
+    const bLine = b.sourceAnchor?.line ?? Number.MAX_SAFE_INTEGER;
+    if (aLine !== bLine) return aLine - bLine;
+
+    return a.ruleId.localeCompare(b.ruleId);
+  });
+}
+
+const INTERVIEW_SEVERITY_FACTOR: Record<Severity, number> = {
+  P0: 1.0,
+  P1: 0.35,
+  P2: 0.08,
+};
+
+const INTERVIEW_TYPE_BASE_PENALTY: Record<ReviewIssueType, number> = {
+  项目闭环: 12,
+  证据可信度: 13,
+  AIPM岗位匹配: 9,
+  表达质量: 4,
+};
+
+function computeInterviewReadiness(issues: ReviewIssue[]): number {
+  const penalty = issues.reduce((sum, issue) => {
+    const typePenalty = INTERVIEW_TYPE_BASE_PENALTY[issue.issueType ?? "表达质量"];
+    const severityFactor = INTERVIEW_SEVERITY_FACTOR[issue.severity];
+    const ruleWeight = getUserKnowledgeWeight(issue.ruleId);
+    return sum + typePenalty * severityFactor * ruleWeight;
+  }, 0);
+
+  return Math.max(42, Math.min(97, Math.round(92 - penalty)));
+}
+
 function detectRepeatedPrefixes(lines: string[]): { prefix: string; sample: string; count: number }[] {
   const map = new Map<string, { count: number; sample: string }>();
   for (const line of lines) {
@@ -227,6 +310,18 @@ function buildRuleIssues(text: string): ReviewIssue[] {
     /\d+(\.\d+)?\s*%/,
     /\d+(\.\d+)?\s*(倍|万|千|天|小时|分钟)/,
   ];
+  const decisionPatterns = [
+    /决策/,
+    /判断/,
+    /定义/,
+    /选型/,
+    /取舍/,
+    /trade-?off/i,
+    /对比/,
+    /为什么/,
+  ];
+  const methodPatterns = [/方案/, /策略/, /流程/, /机制/, /路径/, /方法/, /步骤/];
+  const boundaryPatterns = [/边界/, /约束/, /限制/, /风险/, /兜底/, /不允许/, /人工确认/, /回退/];
 
   const completeProjectCount = blocks.filter((block) => {
     const hasBackground = hasAny(block, backgroundPatterns);
@@ -251,10 +346,10 @@ function buildRuleIssues(text: string): ReviewIssue[] {
       title: "项目表达不完整",
       issueType: "项目闭环",
       whyProblem: "项目描述缺少完整闭环，读者无法判断你解决了什么问题并产生了什么结果。",
-      violatedRule: "项目必须完整表达：背景 -> 做了什么 -> 结果",
+      violatedRule: "项目必须完整表达：问题 -> 决策 -> 方法 -> 结果",
       replacementBefore: evidence,
       replacementAfter:
-        "面向XX用户的XX问题，我主导XX方案落地，2周内将XX指标从A提升到B（口径：XX）。",
+        "面向XX用户的XX问题，我基于XX约束做出XX决策并落地XX方法，2周内将XX指标从A提升到B（口径：XX）。",
       sourceAnchor: toSourceAnchor(lines, evidence),
       evidence: evidence ? shortLine(evidence) : undefined,
     });
@@ -300,6 +395,51 @@ function buildRuleIssues(text: string): ReviewIssue[] {
         evidence: shortLine(strengthLine),
       });
     }
+  }
+
+  const hasDecisionSignal = hasAny(lineText, decisionPatterns);
+  if (!hasDecisionSignal && hasAny(lineText, actionPatterns)) {
+    const decisionEvidence =
+      firstMatchLine(lines, actionPatterns) ?? firstMatchLine(lines, [/项目/, /方案/, /模型/]) ?? lines[0];
+    pushIssue(issues, {
+      ruleId: "U1",
+      severity: "P0",
+      title: "缺少关键决策证据",
+      issueType: "AIPM岗位匹配",
+      whyProblem: "只描述“做了什么”但没有“为什么这样做”，会显著削弱决策能力与抗追问表现。",
+      violatedRule: "决策能力优先：问题 -> 决策 -> 方法 -> 结果",
+      replacementBefore: decisionEvidence,
+      replacementAfter:
+        "在XX场景下，我基于XX约束进行方案判断（trade-off：XX vs XX），最终选择XX并落地，结果为XX。",
+      sourceAnchor: toSourceAnchor(lines, decisionEvidence),
+      evidence: decisionEvidence ? shortLine(decisionEvidence) : undefined,
+    });
+  }
+
+  const hasProblemSignal = hasAny(lineText, backgroundPatterns);
+  const hasMethodSignal = hasAny(lineText, methodPatterns) || hasAny(lineText, actionPatterns);
+  const hasResultSignal = hasAny(lineText, resultPatterns);
+  const hasFullCausalChain =
+    hasProblemSignal && hasDecisionSignal && hasMethodSignal && hasResultSignal;
+  if (!hasFullCausalChain && (hasProblemSignal || hasMethodSignal || hasResultSignal)) {
+    const chainEvidence =
+      firstMatchLine(lines, backgroundPatterns) ??
+      firstMatchLine(lines, actionPatterns) ??
+      firstMatchLine(lines, resultPatterns) ??
+      lines[0];
+    pushIssue(issues, {
+      ruleId: "U2",
+      severity: "P1",
+      title: "因果链不完整",
+      issueType: "项目闭环",
+      whyProblem: "项目表达未形成“问题 -> 决策 -> 方法 -> 结果”的完整链路，面试拆解时容易断层。",
+      violatedRule: "必须形成可追问的因果证据链",
+      replacementBefore: chainEvidence,
+      replacementAfter:
+        "先写问题，再写决策依据与取舍，随后写落地方法，最后给出可验证结果与口径。",
+      sourceAnchor: toSourceAnchor(lines, chainEvidence),
+      evidence: chainEvidence ? shortLine(chainEvidence) : undefined,
+    });
   }
 
   const starLine = firstMatchLine(lines, [
@@ -396,6 +536,26 @@ function buildRuleIssues(text: string): ReviewIssue[] {
     });
   }
 
+  const hasBoundarySignal = hasAny(lineText, boundaryPatterns);
+  const aiContextSignal = hasAny(lineText, [/AI/i, /模型/, /自动化/, /Agent/i, /上线/, /策略/]);
+  if (!hasBoundarySignal && aiContextSignal) {
+    const boundaryEvidence =
+      firstMatchLine(lines, [/AI/i, /模型/, /自动化/, /Agent/i, /上线/, /策略/]) ?? lines[0];
+    pushIssue(issues, {
+      ruleId: "A4",
+      severity: "P1",
+      title: "边界与风险控制描述不足",
+      issueType: "AIPM岗位匹配",
+      whyProblem: "缺少“不能做什么、如何控风险”的描述，会让方案显得不可靠。",
+      violatedRule: "AI PM 必须体现边界意识与风险控制",
+      replacementBefore: boundaryEvidence,
+      replacementAfter:
+        "补充约束说明：明确不允许自动执行的环节、人工确认节点与异常回退机制。",
+      sourceAnchor: toSourceAnchor(lines, boundaryEvidence),
+      evidence: boundaryEvidence ? shortLine(boundaryEvidence) : undefined,
+    });
+  }
+
   const englishExplainLine = firstMatchLine(lines, [/[A-Za-z]{3,}\s*[（(][^）)]{2,}[）)]/]);
   if (englishExplainLine) {
     pushIssue(issues, {
@@ -409,6 +569,56 @@ function buildRuleIssues(text: string): ReviewIssue[] {
       replacementAfter: "改写为中文动作句：在XX场景搭建检索增强流程，用于提升XX任务的稳定性与准确度。",
       sourceAnchor: toSourceAnchor(lines, englishExplainLine),
       evidence: shortLine(englishExplainLine),
+    });
+  }
+
+  const firstPersonLines = lines.filter((line) =>
+    /(我负责|我主导|我推进|我做了|我完成|我参与|^我[在将把并])/u.test(line),
+  );
+  const firstPersonRatio =
+    lines.length === 0 ? 0 : firstPersonLines.length / Math.max(lines.length, 1);
+  if (firstPersonLines.length >= 3 && firstPersonRatio >= 0.45) {
+    const firstPersonEvidence = firstPersonLines[0];
+    pushIssue(issues, {
+      ruleId: "U3",
+      severity: "P2",
+      title: "第一人称表达密度偏高",
+      issueType: "表达质量",
+      whyProblem: "连续“我负责/我做了”会降低专业表达密度，影响可扫读性与客观感。",
+      violatedRule: "减少第一人称重复，保留关键动作与结果",
+      replacementBefore: firstPersonEvidence,
+      replacementAfter:
+        "将连续“我”句改为动作主语句：如“主导XX决策并推动落地，最终带来XX结果”。",
+      sourceAnchor: toSourceAnchor(lines, firstPersonEvidence),
+      evidence: shortLine(
+        `第一人称句 ${firstPersonLines.length} 行，占比 ${(firstPersonRatio * 100).toFixed(0)}%`,
+      ),
+    });
+  }
+
+  const paperStyleLine = firstMatchLine(lines, [
+    /本文/,
+    /本研究/,
+    /从.+维度/,
+    /方法论/,
+    /能力矩阵/,
+    /赋能/,
+    /抓手/,
+    /体系化/,
+    /理论/,
+  ]);
+  if (paperStyleLine) {
+    pushIssue(issues, {
+      ruleId: "U4",
+      severity: "P2",
+      title: "检测到论文式表达",
+      issueType: "表达质量",
+      whyProblem: "过于抽象的报告式语言不利于招聘方快速理解你的真实业务动作。",
+      violatedRule: "使用自然工作场景表达，避免论文式抽象描述",
+      replacementBefore: paperStyleLine,
+      replacementAfter: "改写为业务场景句：在XX场景下做了XX动作，最终带来XX结果。",
+      sourceAnchor: toSourceAnchor(lines, paperStyleLine),
+      evidence: shortLine(paperStyleLine),
     });
   }
 
@@ -470,6 +680,10 @@ function buildRuleIssues(text: string): ReviewIssue[] {
 
 function isRuleRelevantToRole(ruleId: string, role: RoleKey): boolean {
   const mapping: Record<string, RoleKey[]> = {
+    U1: ["PM", "技术", "项目管理"],
+    U2: ["HR", "PM", "技术", "项目管理"],
+    U3: ["HR", "设计"],
+    U4: ["HR", "设计"],
     R1: ["HR", "PM", "技术", "设计", "项目管理"],
     R2: ["HR", "PM"],
     R3: ["HR", "PM"],
@@ -480,6 +694,7 @@ function isRuleRelevantToRole(ruleId: string, role: RoleKey): boolean {
     E1: ["HR", "设计"],
     A1: ["PM", "技术"],
     A2: ["PM", "项目管理"],
+    A4: ["PM", "技术", "项目管理"],
   };
 
   const roles = mapping[ruleId];
@@ -510,11 +725,11 @@ function buildRoleScores(issues: ReviewIssue[]): RoleScore[] {
 
   return roles.map((role) => {
     const penalty = issues.reduce((sum, issue) => {
-      const unit = SEVERITY_PENALTY[issue.severity];
-      return sum + (isRuleRelevantToRole(issue.ruleId, role) ? unit : Math.round(unit * 0.4));
-    }, 0);
+      const weightedUnit = SEVERITY_PENALTY[issue.severity] * getUserKnowledgeWeight(issue.ruleId);
+      return sum + (isRuleRelevantToRole(issue.ruleId, role) ? weightedUnit : weightedUnit * 0.4);
+    }, 0.0);
 
-    const score = Math.max(38, Math.min(96, bases[role] - penalty));
+    const score = Math.max(38, Math.min(96, Math.round(bases[role] - penalty)));
     return {
       role,
       score,
@@ -523,33 +738,38 @@ function buildRoleScores(issues: ReviewIssue[]): RoleScore[] {
   });
 }
 
-function buildSummary(issues: ReviewIssue[]): string {
+function buildSummary(
+  issues: ReviewIssue[],
+  ruleScore: number,
+  interviewReadiness: number,
+): string {
   if (issues.length === 0) {
-    return "未检测到明显硬规则问题，可进入表达精修与面试话术打磨阶段。";
+    return `未检测到明显硬规则问题。Rule Score ${ruleScore}，Interview Readiness ${interviewReadiness}。可进入表达精修与面试话术打磨阶段。`;
   }
 
   const p0Count = issues.filter((item) => item.severity === "P0").length;
   const p1Count = issues.filter((item) => item.severity === "P1").length;
   const p2Count = issues.filter((item) => item.severity === "P2").length;
-  const topRules = issues
+  const topRules = [...new Set(sortIssuesByUserKnowledge(issues).map((item) => item.ruleId))]
     .slice(0, 3)
-    .map((item) => item.ruleId)
     .join(" / ");
 
-  return `共发现 ${issues.length} 个问题（P0 ${p0Count}、P1 ${p1Count}、P2 ${p2Count}）。建议优先处理 P0，再处理规则 ${topRules}。`;
+  return `共发现 ${issues.length} 个问题（P0 ${p0Count}、P1 ${p1Count}、P2 ${p2Count}）。Rule Score ${ruleScore}，Interview Readiness ${interviewReadiness}。建议按 USER_KNOWLEDGE 优先级先处理 P0，再处理规则 ${topRules}。`;
 }
 
 export function buildRuleBasedReview(text: string): ReviewResult {
   const normalized = normalizeText(text);
-  const issues = buildRuleIssues(normalized);
+  const issues = sortIssuesByUserKnowledge(buildRuleIssues(normalized));
   const roleScores = buildRoleScores(issues);
-  const totalScore = Math.round(
+  const ruleScore = Math.round(
     roleScores.reduce((sum, item) => sum + item.score, 0) / roleScores.length,
   );
+  const interviewReadiness = computeInterviewReadiness(issues);
+  const totalScore = Math.round(ruleScore * 0.45 + interviewReadiness * 0.55);
 
   return {
     totalScore,
-    summary: buildSummary(issues),
+    summary: buildSummary(issues, ruleScore, interviewReadiness),
     roleScores,
     issues,
   };
@@ -570,7 +790,17 @@ function buildQuickFixes(issues: ReviewIssue[]): RewriteSuggestion[] {
     ];
   }
 
-  return issues.slice(0, 6).map((issue) => ({
+  const prioritized = sortIssuesByUserKnowledge(issues);
+  const interviewImpactFirst = prioritized.filter((issue) => issue.severity !== "P2");
+  const selectedIssues =
+    interviewImpactFirst.length >= 6
+      ? interviewImpactFirst.slice(0, 6)
+      : [...interviewImpactFirst, ...prioritized.filter((issue) => issue.severity === "P2")].slice(
+          0,
+          6,
+        );
+
+  return selectedIssues.map((issue) => ({
     issueId: issue.id,
     before: issue.directReplacement.before,
     after: issue.directReplacement.after,
