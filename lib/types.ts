@@ -8,11 +8,33 @@ export type RoleScore = {
   summary: string;
 };
 
+export type DirectReplacement = {
+  before: string;
+  after: string;
+};
+
+export type WhyThisMatters = {
+  hrScreeningRisk: string;
+  interviewFollowUpRisk: string;
+  credibilityRisk: string;
+};
+
+export type SourceAnchor = {
+  line: number;
+  text: string;
+};
+
 export type ReviewIssue = {
   id: string;
   ruleId: string;
   severity: Severity;
   title: string;
+  issueSummary: string;
+  whyProblem: string;
+  violatedRule: string;
+  directReplacement: DirectReplacement;
+  whyThisMatters: WhyThisMatters;
+  sourceAnchor?: SourceAnchor;
   reason: string;
   suggestion: string;
   hitRule: string;

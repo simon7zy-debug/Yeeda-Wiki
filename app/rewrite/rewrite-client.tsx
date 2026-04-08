@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import ResumeReferenceRail from "@/components/resume/reference-rail";
 import type { RewriteResult } from "@/lib/types";
 
 type RewriteResponse = {
@@ -49,7 +50,8 @@ export default function RewriteClient() {
 
   return (
     <div className="min-h-screen bg-background px-4 py-8 sm:px-8">
-      <main className="mx-auto w-full max-w-5xl rounded-3xl border border-line bg-panel p-6 shadow-lg sm:p-10">
+      <main className="mx-auto grid w-full max-w-7xl gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <section className="rounded-3xl border border-line bg-panel p-6 shadow-lg sm:p-10">
         <div className="mb-8 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <p className="text-xs font-medium tracking-wide text-ink-soft">
@@ -207,6 +209,10 @@ export default function RewriteClient() {
             </section>
           </div>
         ) : null}
+        </section>
+        <div className="hidden lg:block">
+          <ResumeReferenceRail title="改写参考栏" />
+        </div>
       </main>
     </div>
   );

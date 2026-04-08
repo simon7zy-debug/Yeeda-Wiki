@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import ResumeReferenceRail from "@/components/resume/reference-rail";
+
 type UploadResult = {
   docId: string;
   fileName: string;
@@ -98,7 +100,8 @@ export default function ResumePage() {
             "radial-gradient(circle at 10% 10%, #f2c6a8 0%, transparent 35%), radial-gradient(circle at 85% 20%, #f0dbb9 0%, transparent 38%), radial-gradient(circle at 60% 85%, #d7e3d4 0%, transparent 45%)",
         }}
       />
-      <main className="relative w-full max-w-3xl rounded-3xl border border-line bg-panel/95 p-6 shadow-xl backdrop-blur sm:p-10">
+      <main className="relative mx-auto grid w-full max-w-6xl gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <section className="rounded-3xl border border-line bg-panel/95 p-6 shadow-xl backdrop-blur sm:p-10">
         <div className="mb-8 flex flex-wrap items-center justify-between gap-3">
           <div>
             <p className="mb-3 inline-flex rounded-full border border-line bg-white px-3 py-1 text-xs font-medium tracking-wide text-ink-soft">
@@ -220,6 +223,10 @@ export default function ResumePage() {
           >
             重置
           </button>
+        </div>
+        </section>
+        <div className="hidden lg:block">
+          <ResumeReferenceRail title="简历上传前参考" />
         </div>
       </main>
     </div>

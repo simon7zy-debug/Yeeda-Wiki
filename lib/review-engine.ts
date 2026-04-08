@@ -1,4 +1,5 @@
 import type {
+  DirectReplacement,
   RewriteResult,
   RewriteSuggestion,
   ReviewIssue,
@@ -6,15 +7,20 @@ import type {
   RoleKey,
   RoleScore,
   Severity,
+  SourceAnchor,
+  WhyThisMatters,
 } from "@/lib/types";
 
 type RuleInput = {
   ruleId: string;
   severity: Severity;
   title: string;
-  reason: string;
-  suggestion: string;
-  hitRule: string;
+  whyProblem: string;
+  replacementAfter: string;
+  violatedRule: string;
+  replacementBefore?: string;
+  whyThisMatters?: WhyThisMatters;
+  sourceAnchor?: SourceAnchor;
   evidence?: string;
 };
 
@@ -83,15 +89,75 @@ function shortLine(line: string, maxLen = 120): string {
   return `${line.slice(0, maxLen - 1)}…`;
 }
 
+function indexOfLine(lines: string[], target?: string): number | undefined {
+  if (!target) return undefined;
+  const index = lines.findIndex((line) => line === target);
+  if (index === -1) return undefined;
+  return index + 1;
+}
+
+function toSourceAnchor(lines: string[], line?: string): SourceAnchor | undefined {
+  const lineNumber = indexOfLine(lines, line);
+  if (!lineNumber || !line) return undefined;
+  return {
+    line: lineNumber,
+    text: line,
+  };
+}
+
+function fallbackWhyThisMatters(severity: Severity): WhyThisMatters {
+  if (severity === "P0") {
+    return {
+      hrScreeningRisk: "HR 在初筛阶段可能直接判定为“核心项目表达不完整”。",
+      interviewFollowUpRisk: "面试官会快速追问项目细节，回答容易出现断层。",
+      credibilityRisk: "缺少闭环证据会让结果可信度明显下降。",
+    };
+  }
+
+  if (severity === "P1") {
+    return {
+      hrScreeningRisk: "HR 可能认为亮点不够集中，简历竞争力下降。",
+      interviewFollowUpRisk: "面试追问时容易出现“有结论、缺证据”的情况。",
+      credibilityRisk: "关键信息不完整会削弱说服力与专业判断。",
+    };
+  }
+
+  return {
+    hrScreeningRisk: "HR 可能把这类问题视为表达质量不稳定。",
+    interviewFollowUpRisk: "面试中会增加澄清成本，影响沟通效率。",
+    credibilityRisk: "细节不一致会降低整体专业感。",
+  };
+}
+
+function buildDirectReplacement(input: RuleInput): DirectReplacement {
+  const before = input.replacementBefore?.trim() || "原句较泛，缺少可验证信息。";
+  return {
+    before,
+    after: input.replacementAfter.trim(),
+  };
+}
+
 function pushIssue(issues: ReviewIssue[], input: RuleInput): void {
+  const issueSummary = input.title;
+  const whyProblem = input.whyProblem;
+  const violatedRule = input.violatedRule;
+  const directReplacement = buildDirectReplacement(input);
+  const whyThisMatters = input.whyThisMatters ?? fallbackWhyThisMatters(input.severity);
+
   issues.push({
     id: crypto.randomUUID(),
     ruleId: input.ruleId,
     severity: input.severity,
-    title: input.title,
-    reason: input.reason,
-    suggestion: input.suggestion,
-    hitRule: input.hitRule,
+    title: issueSummary,
+    issueSummary,
+    whyProblem,
+    violatedRule,
+    directReplacement,
+    whyThisMatters,
+    sourceAnchor: input.sourceAnchor,
+    reason: whyProblem,
+    suggestion: directReplacement.after,
+    hitRule: violatedRule,
     evidence: input.evidence,
   });
 }
@@ -179,10 +245,12 @@ function buildRuleIssues(text: string): ReviewIssue[] {
       ruleId: "R1",
       severity: "P0",
       title: "项目表达不完整",
-      reason: "未形成“背景 -> 做了什么 -> 结果”的完整闭环。",
-      suggestion:
-        "每个核心项目补齐三段式表达：背景（用户与问题）-> 行动（你的关键动作）-> 结果（量化变化）。",
-      hitRule: "项目必须完整表达：背景 -> 做了什么 -> 结果",
+      whyProblem: "项目描述缺少完整闭环，读者无法判断你解决了什么问题并产生了什么结果。",
+      violatedRule: "项目必须完整表达：背景 -> 做了什么 -> 结果",
+      replacementBefore: evidence,
+      replacementAfter:
+        "面向XX用户的XX问题，我主导XX方案落地，2周内将XX指标从A提升到B（口径：XX）。",
+      sourceAnchor: toSourceAnchor(lines, evidence),
       evidence: evidence ? shortLine(evidence) : undefined,
     });
   }
@@ -196,10 +264,12 @@ function buildRuleIssues(text: string): ReviewIssue[] {
       ruleId: "R2",
       severity: "P1",
       title: "工具描述替代能力表达",
-      reason: "文本中出现“会用某工具”式表达，能力呈现不够扎实。",
-      suggestion:
-        "改成“我如何设计策略、如何落地、结果如何变化”，避免把工具名当能力结论。",
-      hitRule: "工具 ≠ 能力",
+      whyProblem: "“会用工具”属于工具名堆叠，不能证明你具备可复用的方法论与结果能力。",
+      violatedRule: "工具 ≠ 能力",
+      replacementBefore: toolLine,
+      replacementAfter:
+        "针对XX场景，我设计并落地XX策略（含提示链路与评估方案），将XX指标提升至XX。",
+      sourceAnchor: toSourceAnchor(lines, toolLine),
       evidence: shortLine(toolLine),
     });
   }
@@ -214,10 +284,12 @@ function buildRuleIssues(text: string): ReviewIssue[] {
         ruleId: "R3",
         severity: "P1",
         title: "优势缺少经历支撑",
-        reason: "出现了主观能力表述，但附近缺少可验证的项目经历或结果证据。",
-        suggestion:
-          "把“优势”改成“在哪个项目做了什么动作，产生了什么结果”。",
-        hitRule: "优势必须有经历支撑",
+        whyProblem: "仅写“优势/擅长”会被视为主观评价，缺少可核验的项目证据。",
+        violatedRule: "优势必须有经历支撑",
+        replacementBefore: strengthLine,
+        replacementAfter:
+          "在XX项目中我负责XX，并通过XX动作让XX指标从A变化到B（统计窗口：XX）。",
+        sourceAnchor: toSourceAnchor(lines, strengthLine),
         evidence: shortLine(strengthLine),
       });
     }
@@ -235,22 +307,29 @@ function buildRuleIssues(text: string): ReviewIssue[] {
       ruleId: "R4",
       severity: "P1",
       title: "检测到 STAR 模板化标记",
-      reason: "文本中出现 STAR 标签或对应结构标记。",
-      suggestion: "移除模板标签，改成自然语言叙述项目逻辑。",
-      hitRule: "不允许写【S】【T】【A】【R】",
+      whyProblem: "模板化标签会降低自然表达，容易给人“套模板”而非真实经验的观感。",
+      violatedRule: "不允许写【S】【T】【A】【R】",
+      replacementBefore: starLine,
+      replacementAfter:
+        "我在XX场景识别到XX问题，主导XX方案并推动上线，最终实现XX结果（口径：XX）。",
+      sourceAnchor: toSourceAnchor(lines, starLine),
       evidence: shortLine(starLine),
     });
   }
 
   const repeatedPrefixes = detectRepeatedPrefixes(lines);
   if (repeatedPrefixes.length > 0) {
+    const repeatedSample = repeatedPrefixes[0]?.sample;
     pushIssue(issues, {
       ruleId: "R5",
       severity: "P2",
       title: "多项目句式重复度偏高",
-      reason: "检测到多段描述以高度相似的句式开头，影响阅读辨识度。",
-      suggestion: "按项目类型区分叙述角度，避免每段都从同样句式起笔。",
-      hitRule: "不同项目不能同一套句式",
+      whyProblem: "连续使用同一开头会降低信息辨识度，削弱各项目的独特价值。",
+      violatedRule: "不同项目不能同一套句式",
+      replacementBefore: repeatedSample,
+      replacementAfter:
+        "把本项目开头改为“为解决XX问题，我在XX阶段主导XX动作，最终带来XX变化”。",
+      sourceAnchor: toSourceAnchor(lines, repeatedSample),
       evidence: shortLine(
         `重复前缀样例：${repeatedPrefixes[0]?.sample ?? ""}（重复 ${repeatedPrefixes[0]?.count ?? 0} 次）`,
       ),
@@ -259,13 +338,17 @@ function buildRuleIssues(text: string): ReviewIssue[] {
 
   const duplicatedLines = detectDuplicatedLongLines(lines);
   if (duplicatedLines.length > 0) {
+    const duplicateSample = duplicatedLines[0]?.line;
     pushIssue(issues, {
       ruleId: "R6",
       severity: "P2",
       title: "经历内容存在重复",
-      reason: "检测到多个长句重复出现，可能导致工作经历与项目经历信息重叠。",
-      suggestion: "明确区分“工作经历”与“项目经历”层级，避免重复描述同一句事实。",
-      hitRule: "工作经历与项目经历不能重复",
+      whyProblem: "重复陈述会占用篇幅，且让读者难以区分岗位职责与项目贡献。",
+      violatedRule: "工作经历与项目经历不能重复",
+      replacementBefore: duplicateSample,
+      replacementAfter:
+        "工作经历保留职责范围，项目经历改写为“目标-动作-结果”并突出该项目独有成果。",
+      sourceAnchor: toSourceAnchor(lines, duplicateSample),
       evidence: shortLine(
         `重复样例：${duplicatedLines[0]?.line ?? ""}（出现 ${duplicatedLines[0]?.count ?? 0} 次）`,
       ),
@@ -292,9 +375,12 @@ function buildRuleIssues(text: string): ReviewIssue[] {
       ruleId: "R7",
       severity: "P1",
       title: "数据结果缺少解释口径",
-      reason: "出现了量化结果，但未说明数据来源或计算口径。",
-      suggestion: "补充“数据来源 + 统计口径 + 时间范围”，让结果可解释。",
-      hitRule: "数据必须可解释：怎么算的、来源是什么",
+      whyProblem: "只有结果数字、缺少来源与口径，会被质疑数据真实性与可比性。",
+      violatedRule: "数据必须可解释：怎么算的、来源是什么",
+      replacementBefore: metricLine,
+      replacementAfter:
+        "XX指标由A提升到B（来源：XX后台；口径：XX用户7日滚动均值；周期：YYYY.MM-YYYY.MM）。",
+      sourceAnchor: toSourceAnchor(lines, metricLine),
       evidence: metricLine ? shortLine(metricLine) : undefined,
     });
   }
@@ -305,9 +391,11 @@ function buildRuleIssues(text: string): ReviewIssue[] {
       ruleId: "E1",
       severity: "P2",
       title: "英文术语括号解释较重",
-      reason: "检测到“英文术语 + 括号解释”表达，不够自然。",
-      suggestion: "改为中文自然语言：写清动作、场景和作用即可。",
-      hitRule: "表达规则：英文 + 括号解释 -> 自然语言表达",
+      whyProblem: "术语+括号解释会打断阅读节奏，影响招聘方快速理解关键信息。",
+      violatedRule: "表达规则：英文 + 括号解释 -> 自然语言表达",
+      replacementBefore: englishExplainLine,
+      replacementAfter: "改写为中文动作句：在XX场景搭建检索增强流程，用于提升XX任务的稳定性与准确度。",
+      sourceAnchor: toSourceAnchor(lines, englishExplainLine),
       evidence: shortLine(englishExplainLine),
     });
   }
@@ -329,9 +417,10 @@ function buildRuleIssues(text: string): ReviewIssue[] {
       ruleId: "A1",
       severity: missingCapabilities.length >= 3 ? "P1" : "P2",
       title: "AI PM 核心能力覆盖不足",
-      reason: "简历中与 AI PM 相关的能力证据覆盖不均衡。",
-      suggestion: `优先补充这些能力证据：${missingCapabilities.join("、")}。`,
-      hitRule: "AI PM 核心能力：模型选型 / 场景判断 / 需求拆解 / 技术边界 / 数据评估",
+      whyProblem: "能力覆盖不均衡会让岗位匹配度显得偏弱，尤其在 AI PM 核心能力维度。",
+      violatedRule: "AI PM 核心能力：模型选型 / 场景判断 / 需求拆解 / 技术边界 / 数据评估",
+      replacementBefore: `当前缺失：${missingCapabilities.join("、")}`,
+      replacementAfter: `补充1-2条项目要点，明确体现：${missingCapabilities.join("、")}，并附可量化结果。`,
       evidence: `缺失能力项：${missingCapabilities.join("、")}`,
     });
   }
@@ -354,9 +443,10 @@ function buildRuleIssues(text: string): ReviewIssue[] {
       ruleId: "A2",
       severity: missingFocus.length >= 4 ? "P1" : "P2",
       title: "项目评审重点覆盖不足",
-      reason: "项目叙述未覆盖关键评审点，影响说服力。",
-      suggestion: `补齐这些重点：${missingFocus.join("、")}。`,
-      hitRule: "项目评审重点：用户/问题/AI 选择/模型选择/方案对比/量化结果",
+      whyProblem: "关键评审点缺失会导致项目叙述不完整，难以支撑面试追问。",
+      violatedRule: "项目评审重点：用户/问题/AI 选择/模型选择/方案对比/量化结果",
+      replacementBefore: `当前缺失重点：${missingFocus.join("、")}`,
+      replacementAfter: `新增一段“项目决策说明”，至少补齐：${missingFocus.join("、")}。`,
       evidence: `缺失重点：${missingFocus.join("、")}`,
     });
   }
@@ -451,6 +541,10 @@ export function buildRuleBasedReview(text: string): ReviewResult {
   };
 }
 
+export function buildResumeDisplayLines(text: string): string[] {
+  return splitLines(text);
+}
+
 function buildQuickFixes(issues: ReviewIssue[]): RewriteSuggestion[] {
   if (issues.length === 0) {
     return [
@@ -464,8 +558,8 @@ function buildQuickFixes(issues: ReviewIssue[]): RewriteSuggestion[] {
 
   return issues.slice(0, 6).map((issue) => ({
     issueId: issue.id,
-    before: issue.evidence ?? issue.title,
-    after: issue.suggestion,
+    before: issue.directReplacement.before,
+    after: issue.directReplacement.after,
   }));
 }
 
@@ -618,31 +712,25 @@ function buildResumeDeliveryDraft(sourceText: string, review: ReviewResult): str
   const capabilityBullets = pickCapabilityBullets(lineText);
 
   return [
-    "【求职方向】",
-    "AI 产品经理（AIPM）",
+    "求职方向：AI 产品经理（AIPM）",
     "",
-    "【个人简介】",
+    "个人简介",
     headline,
     "擅长从用户问题出发，完成需求拆解、方案设计、落地推进与结果复盘，能够在不确定场景下快速形成可执行方案。",
     "",
-    "【核心能力】",
+    "核心能力",
     ...capabilityBullets.map((item) => `- ${item}`),
     "",
-    "【核心项目经历】",
-    "- 项目背景：",
-    `  ${background}`,
-    "- 关键动作：",
-    `  ${action}`,
-    "- 技术与策略：",
-    `  ${techDecision}`,
-    "- 项目结果：",
-    `  ${result}`,
+    "代表项目（可投递写法示例）",
+    `- ${background}。我负责${action.replace(/^我/, "")}，并推动关键方案上线。`,
+    `- 在方案设计与技术决策中，${techDecision}。`,
+    `- 项目最终带来${result}。`,
     "",
-    "【协作与推进】",
+    "协作与推进",
     `- ${collaboration}`,
     "- 具备目标对齐、风险前置与节奏管理能力，可持续推动跨团队协作。",
     "",
-    "【投递前自检（建议）】",
+    "投递前自检（建议）",
     ...buildDeliveryChecklist(review).slice(0, 3).map((item) => `- ${item}`),
   ].join("\n");
 }

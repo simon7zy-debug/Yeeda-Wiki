@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getDocument, updateReview } from "@/lib/document-store";
-import { buildRuleBasedReview } from "@/lib/review-engine";
+import { buildResumeDisplayLines, buildRuleBasedReview } from "@/lib/review-engine";
 
 export const runtime = "nodejs";
 
@@ -29,6 +29,7 @@ export async function GET(request: Request) {
   return NextResponse.json({
     docId,
     fileName: document.fileName,
+    sourceLines: buildResumeDisplayLines(document.extractedText),
     review,
   });
 }
